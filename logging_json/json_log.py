@@ -24,7 +24,7 @@ def is_true(strval):
     return bool(strtobool(strval or "0".lower()))
 
 
-class OdooJsonFormatter(JsonFormatter):
+class OdooJsonFormatter(JsonFormatter or logging.Formatter):
     def add_fields(self, log_record, record, message_dict):
         record.pid = os.getpid()
         record.dbname = getattr(threading.current_thread(), "dbname", "?")
@@ -73,13 +73,13 @@ if is_true(os.environ.get("ODOO_LOGGING_JSON")):
         logging.getLogger().handlers[0].formatter = formatter
 
 
-# monkey patch Request constructor to store request_uuid
-org_init = Request.__init__
+# monkey patch Request constructor to store request_uuid (only when enabled:
+# importing the module must not change the server, e.g. module discovery)
+if is_true(os.environ.get("ODOO_LOGGING_JSON")):
+    org_init = Request.__init__
 
+    def new_init(self, httprequest):
+        org_init(self, httprequest)
+        threading.current_thread().request_uuid = uuid.uuid4()
 
-def new_init(self, httprequest):
-    org_init(self, httprequest)
-    threading.current_thread().request_uuid = uuid.uuid4()
-
-
-Request.__init__ = new_init
+    Request.__init__ = new_init
