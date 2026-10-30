@@ -37,7 +37,9 @@ prefix = os.getenv("ODOO_SESSION_REDIS_PREFIX")
 url = os.getenv("ODOO_SESSION_REDIS_URL")
 password = os.getenv("ODOO_SESSION_REDIS_PASSWORD")
 expiration = os.getenv("ODOO_SESSION_REDIS_EXPIRATION")
+expiration = int(expiration) if expiration else None
 anon_expiration = os.getenv("ODOO_SESSION_REDIS_EXPIRATION_ANONYMOUS")
+anon_expiration = int(anon_expiration) if anon_expiration else None
 # For non url connections
 ssl = os.getenv("ODOO_SESSION_REDIS_SSL", "1")
 ssl_cert_reqs = os.getenv("ODOO_SESSION_REDIS_SSL_CERT_REQS", "1")
@@ -91,12 +93,13 @@ def purge_fs_sessions(path):
         _logger.warning(f"Session directory '{path}' does not exist.")
         return
 
-    for fname in os.listdir(path):
-        path = os.path.join(path, fname)
-        try:
-            os.unlink(path)
-        except OSError:
-            _logger.warning("OS Error during purge of redis sessions.")
+    # Odoo 20 stores the sessions in sub-directories (<sid[:2]>/<sid>)
+    for root, _dirs, files in os.walk(path):
+        for fname in files:
+            try:
+                os.unlink(os.path.join(root, fname))
+            except OSError:
+                _logger.warning("OS Error during purge of filesystem sessions.")
 
 
 if is_true(os.getenv("ODOO_SESSION_REDIS")):

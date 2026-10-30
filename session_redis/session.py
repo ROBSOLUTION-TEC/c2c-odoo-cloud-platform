@@ -4,6 +4,7 @@
 import builtins
 import json
 import logging
+import time
 from typing import TypeAlias
 
 from odoo.http.session import (
@@ -68,18 +69,15 @@ class RedisSessionStore(SessionStore):
         # odoo.http.session.SESSION_DELETION_TIMER.
         # Otherwise, allow to set a custom expiration for a session
         # such as a very short one for monitoring requests
-        if session.uid:
-            expiration = (
-                session.get("deletion_time")
-                or session.get("expiration")
-                or self.expiration
-            )
+        deletion_time = session.get("deletion_time")
+        if deletion_time:
+            # deletion_time is a timestamp (odoo.http.session.SessionStore.rotate),
+            # not a duration: keep the old session until then
+            expiration = max(int(deletion_time - time.time()), 1)
+        elif session.uid:
+            expiration = session.get("expiration") or self.expiration
         else:
-            expiration = (
-                session.get("deletion_time")
-                or session.get("expiration")
-                or self.anon_expiration
-            )
+            expiration = session.get("expiration") or self.anon_expiration
         if _logger.isEnabledFor(logging.DEBUG):
             if session.uid:
                 user_msg = f"user '{session.login}' (id: {session.uid})"
@@ -94,8 +92,11 @@ class RedisSessionStore(SessionStore):
             "utf-8"
         )
         if self.redis.set(key, data):
-            if not (expiration and isinstance(expiration, int)):
-                expiration = DEFAULT_SESSION_TIMEOUT_ANONYMOUS
+            try:
+                expiration = int(expiration)
+            except (TypeError, ValueError):
+                expiration = 0
+            if expiration <= 0:
                 expiration = DEFAULT_SESSION_TIMEOUT_ANONYMOUS
             return self.redis.expire(key, expiration)
 
@@ -136,7 +137,8 @@ class RedisSessionStore(SessionStore):
         return self.session_cls(data, sid, new=False)
 
     def list(self):
-        keys = self.redis.keys(f"{self.prefix}*")
+        # SCAN instead of KEYS: KEYS blocks a (shared) redis server
+        keys = list(self.redis.scan_iter(match=f"{self.prefix}*"))
         _logger.debug("a listing redis keys has been called")
         return [key[len(self.prefix) :] for key in keys]
 
@@ -176,8 +178,7 @@ class RedisSessionStore(SessionStore):
         not_found = set()
         for partial_sid in identifiers:
             key = f"{self.prefix}{partial_sid}*"
-            match = self.redis.keys(pattern=key)
-            if not match:
+            if next(iter(self.redis.scan_iter(match=key)), None) is None:
                 not_found.add(partial_sid)
         return not_found
 
